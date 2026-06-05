@@ -7,6 +7,8 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#1a1a1a">
 <title>Anschreiben Editor</title>
+<!-- html2pdf fuer echten PDF-Download (mit Print-Fallback) -->
+<script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
@@ -46,7 +48,6 @@
     top: 0;
     z-index: 100;
   }
-
   .topbar h1 {
     font-family: 'Palatino Linotype', Georgia, serif;
     font-size: 1.05rem;
@@ -55,12 +56,7 @@
     letter-spacing: 1px;
     white-space: nowrap;
   }
-
-  .topbar-actions {
-    margin-left: auto;
-    display: flex;
-    gap: 8px;
-  }
+  .topbar-actions { margin-left: auto; display: flex; gap: 8px; }
 
   .btn {
     padding: 10px 14px;
@@ -75,12 +71,12 @@
     white-space: nowrap;
     -webkit-appearance: none;
   }
-
   .btn-primary { background: var(--gold); color: #1a1a1a; font-weight: 600; }
   .btn-primary:active { background: #d4b07a; }
   .btn-outline { background: transparent; color: var(--text); border: 1px solid var(--border); }
   .btn-outline:active { border-color: var(--gold); color: var(--gold); }
   .btn-icon { padding: 10px 12px; }
+  .btn[disabled] { opacity: 0.5; pointer-events: none; }
 
   /* ---------- EDIT HINT ---------- */
   .edit-hint {
@@ -93,7 +89,7 @@
     text-align: center;
   }
 
-  /* ---------- PICKER (Startseite) ---------- */
+  /* ---------- PICKER ---------- */
   .picker {
     flex: 1;
     display: flex;
@@ -103,25 +99,18 @@
     padding: 32px 20px calc(32px + var(--safe-bottom));
     gap: 28px;
   }
-
   .picker-intro { text-align: center; max-width: 440px; }
   .picker-intro h2 {
     font-family: 'Palatino Linotype', Georgia, serif;
-    font-weight: 400;
-    font-size: 1.6rem;
-    color: var(--text);
-    margin-bottom: 10px;
+    font-weight: 400; font-size: 1.6rem; color: var(--text); margin-bottom: 10px;
   }
   .picker-intro p { color: var(--muted); font-size: 0.9rem; line-height: 1.6; }
 
   .cards {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 16px;
-    width: 100%;
-    max-width: 440px;
+    gap: 16px; width: 100%; max-width: 440px;
   }
-
   .card {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -130,31 +119,19 @@
     cursor: pointer;
     transition: all 0.2s;
     text-align: center;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
   }
   .card:active { border-color: var(--gold); transform: scale(0.98); }
   @media (hover: hover) { .card:hover { border-color: var(--gold); background: #2a2a2a; } }
-
   .card-avatar {
-    width: 54px; height: 54px;
-    border-radius: 50%;
+    width: 54px; height: 54px; border-radius: 50%;
     background: linear-gradient(135deg, var(--gold), #a8895a);
-    color: #1a1a1a;
-    display: flex; align-items: center; justify-content: center;
-    font-family: 'Palatino Linotype', Georgia, serif;
-    font-size: 1.4rem; font-weight: 600;
+    color: #1a1a1a; display: flex; align-items: center; justify-content: center;
+    font-family: 'Palatino Linotype', Georgia, serif; font-size: 1.4rem; font-weight: 600;
   }
   .card-name { font-size: 1rem; color: var(--text); font-weight: 500; }
   .card-role { font-size: 0.72rem; color: var(--muted); letter-spacing: 0.5px; text-transform: uppercase; }
-  .card-edited { font-size: 0.66rem; color: var(--gold); margin-top: 2px; min-height: 0.9em; }
-
-  .card-load {
-    border-style: dashed;
-    color: var(--muted);
-  }
+  .card-load { border-style: dashed; color: var(--muted); }
   .card-load .card-avatar { background: transparent; border: 1.5px dashed var(--border); color: var(--muted); }
 
   /* ---------- WORKSPACE ---------- */
@@ -170,30 +147,21 @@
   }
   .workspace.active { display: flex; }
 
-  /* Scale wrapper keeps surrounding layout correct after transform */
-  #doc-scale {
-    transform-origin: top left;
-  }
-
+  /* OUTER wrapper takes the *scaled* size so flex-centering works on mobile.
+     INNER frame keeps full A4 width and is shrunk with transform. */
+  #doc-scale { position: relative; }
   #doc-frame {
     width: 210mm;
     background: white;
     box-shadow: 0 8px 40px rgba(0,0,0,0.4);
     color: #000;
-  }
-
-  #doc-frame.editing [contenteditable="true"] {
-    transition: background 0.15s;
+    transform-origin: top left;
   }
   #doc-frame.editing [contenteditable="true"]:hover {
-    outline: 1px dashed var(--gold);
-    outline-offset: 2px;
-    cursor: text;
+    outline: 1px dashed var(--gold); outline-offset: 2px; cursor: text;
   }
   #doc-frame.editing [contenteditable="true"]:focus {
-    outline: 2px solid var(--gold);
-    outline-offset: 2px;
-    background: rgba(201,169,110,0.08);
+    outline: 2px solid var(--gold); outline-offset: 2px; background: rgba(201,169,110,0.08);
   }
 
   /* ---------- STATUS BAR ---------- */
@@ -201,15 +169,11 @@
     background: var(--panel);
     border-top: 1px solid var(--border);
     padding: 7px 16px calc(7px + var(--safe-bottom));
-    font-size: 0.66rem;
-    color: var(--muted);
-    letter-spacing: 0.3px;
-    text-align: center;
+    font-size: 0.66rem; color: var(--muted); letter-spacing: 0.3px; text-align: center;
   }
 
   #file-input { display: none; }
 
-  /* Small phones: tighten topbar */
   @media (max-width: 420px) {
     .topbar h1 { font-size: 0.95rem; letter-spacing: 0.5px; }
     .btn { padding: 9px 11px; font-size: 0.64rem; letter-spacing: 0.6px; }
@@ -220,77 +184,66 @@
 
 <input type="file" id="file-input" accept=".html,.htm">
 
-<!-- TOP BAR -->
 <div class="topbar">
   <button class="btn btn-outline btn-icon" id="back-btn" onclick="goHome()" style="display:none;">&larr;</button>
   <h1>Anschreiben Editor</h1>
   <div class="topbar-actions">
     <button class="btn btn-outline" id="edit-toggle" onclick="toggleEdit()" style="display:none;">Bearbeiten: AUS</button>
-    <button class="btn btn-primary" id="save-btn" onclick="saveAsPDF()" style="display:none;">PDF</button>
+    <button class="btn btn-primary" id="save-btn" onclick="saveAsPDF()" style="display:none;">PDF speichern</button>
   </div>
 </div>
 
-<!-- EDIT HINT -->
 <div class="edit-hint" id="edit-hint" style="display:none;">
-  Bearbeiten aktiv &mdash; tippe auf einen Text um ihn zu &auml;ndern. &Auml;nderungen werden automatisch gespeichert.
+  Bearbeiten aktiv &mdash; tippe auf einen Text um ihn zu &auml;ndern. Die &Auml;nderungen gelten nur f&uuml;r dein PDF &middot; die Vorlage bleibt unver&auml;ndert.
 </div>
 
-<!-- PICKER / STARTSEITE -->
 <div class="picker" id="picker">
   <div class="picker-intro">
-    <h2>Wer m&ouml;chte bearbeiten?</h2>
-    <p>W&auml;hle dein Anschreiben aus. Du kannst den Text jederzeit anpassen und als PDF speichern.</p>
+    <h2>Wer m&ouml;chte ein Anschreiben?</h2>
+    <p>W&auml;hle dein Anschreiben, passe den Text bei Bedarf an und speichere es als PDF. Die Vorlage auf der Website bleibt dabei immer gleich.</p>
   </div>
   <div class="cards" id="cards">
-    <!-- person cards injected here -->
     <div class="card card-load" onclick="document.getElementById('file-input').click()">
       <div class="card-avatar">+</div>
       <div class="card-name">Eigene Datei</div>
       <div class="card-role">HTML laden</div>
-      <div class="card-edited"></div>
     </div>
   </div>
 </div>
 
-<!-- WORKSPACE -->
 <div class="workspace" id="workspace">
   <div id="doc-scale">
     <div id="doc-frame"></div>
   </div>
 </div>
 
-<!-- STATUS -->
 <div class="statusbar" id="status">Bereit</div>
 
 <script>
 /* ============================================================
-   ANSCHREIBEN EDITOR  –  als Website nutzbar (GitHub Pages)
-   - Anschreiben fest eingebaut (Jamie & Liza)
-   - Bearbeiten + automatisches Speichern (localStorage)
-   - Dynamische, saubere Skalierung fuer jedes Handy
+   ANSCHREIBEN EDITOR  –  Website (GitHub Pages)
+   - Jamie & Liza fest eingebaut, Vorlage bleibt IMMER gleich
+   - Bearbeiten nur fuer das PDF (nichts wird dauerhaft gespeichert)
+   - Echter PDF-Download (html2pdf) + Print-Fallback
+   - Dynamische Skalierung fuer jedes Handy
    ============================================================ */
 
-/* ---- Gemeinsames Stylesheet beider Anschreiben ---- */
 const LETTER_CSS = `
-  body { font-family: 'Gill Sans', 'Optima', 'Trebuchet MS', sans-serif; }
-  .l-name, .l-subject {
+  .letter-root, .letter-root * { font-family: 'Gill Sans', 'Optima', 'Trebuchet MS', sans-serif; }
+  .letter-root .l-name, .letter-root .l-subject, .letter-root .closing-name {
     font-family: 'Palatino Linotype', 'Palatino', 'Book Antiqua', 'Garamond', Georgia, serif;
   }
   .letter-root *, .letter-root *::before, .letter-root *::after { margin: 0; padding: 0; box-sizing: border-box; }
   .letter-root {
     --ink: #0f0f0e; --ink-muted: #6b6860; --ink-faint: #b0ada6;
     --paper: #faf9f7; --line: #dddbd6; --gold: #c9a96e;
-    font-size: 10pt;
-    font-family: 'DM Sans', 'Gill Sans', sans-serif;
-    color: var(--ink);
+    font-size: 10pt; color: var(--ink);
   }
   .letter-root .page {
     background: var(--paper); width: 210mm; min-height: 297mm;
     position: relative; overflow: hidden; display: flex; flex-direction: column;
   }
-  .letter-root .page::before {
-    content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--ink);
-  }
+  .letter-root .page::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--ink); }
   .letter-root .header { padding: 36px 52px 26px 56px; border-bottom: 0.5px solid var(--line); }
   .letter-root .header-inner { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
   .letter-root .l-name { font-size: 36pt; font-weight: 300; letter-spacing: -1px; line-height: 1; color: var(--ink); }
@@ -310,25 +263,21 @@ const LETTER_CSS = `
   .letter-root .letter-text p { margin-bottom: 16px; }
   .letter-root .letter-text p:last-child { margin-bottom: 0; }
   .letter-root .closing { margin-top: 36px; font-size: 9.5pt; color: var(--ink-muted); line-height: 1.8; }
-  .letter-root .closing-name { font-size: 13pt; font-weight: 500; color: var(--ink); margin-top: 36px; font-family: 'Palatino Linotype', Georgia, serif; }
+  .letter-root .closing-name { font-size: 13pt; font-weight: 500; color: var(--ink); margin-top: 36px; }
   .letter-root .footer { padding: 0 52px 24px 56px; }
   .letter-root .footer-line { height: 0.5px; background: var(--line); margin-bottom: 14px; }
   .letter-root .footer-text { display: flex; justify-content: space-between; font-size: 7pt; color: var(--ink-faint); letter-spacing: 0.5px; }
 `;
 
-/* CSS used only when printing / exporting to PDF */
 const PRINT_CSS = `
   @page { size: A4; margin: 0; }
   html, body { margin: 0; padding: 0; background: #fff; }
   .letter-root .page { box-shadow: none; width: 100%; min-height: 100vh; }
 `;
 
-/* ---- Anschreiben-Inhalte ---- */
 const LETTERS = {
   liza: {
-    name: 'Liza Hoffmann',
-    role: 'Pflege & Service',
-    initials: 'LH',
+    name: 'Liza Hoffmann', role: 'Pflege & Service', initials: 'LH',
     body: `
 <div class="letter-root">
 <div class="page">
@@ -348,10 +297,7 @@ const LETTERS = {
   </header>
   <div class="letter-body">
     <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:32px;">
-      <div class="recipient">
-        <strong>[Unternehmen]</strong><br>
-        Personalverantwortliche/r<br>
-      </div>
+      <div class="recipient"><strong>[Unternehmen]</strong><br>Personalverantwortliche/r<br></div>
       <div class="date-line">Lemgo, Mai 2026</div>
     </div>
     <div class="l-subject">Initiativbewerbung Saisonstelle</div>
@@ -364,25 +310,17 @@ const LETTERS = {
       <p>Neben meiner Ausbildung habe ich praktische Erfahrung im direkten Kundenkontakt gesammelt: Als Servicemitarbeiterin im M&uuml;nchner L&ouml;wenbr&auml;u habe ich G&auml;ste eigenst&auml;ndig betreut, serviert und kassiert. Erg&auml;nzend dazu habe ich w&auml;hrend meines Schulpraktikums in einer chirurgischen Praxis Erfahrungen in Empfang, Organisation und der Betreuung von Patienten gemacht.</p>
       <p>Ich bin motiviert, lernbereit und bringe echte Freude am Umgang mit Menschen mit. Ich stehe ab sofort zur Verf&uuml;gung und freue mich auf die M&ouml;glichkeit, mich in einem pers&ouml;nlichen Gespr&auml;ch vorzustellen.</p>
     </div>
-    <div class="closing">
-      Mit freundlichen Gr&uuml;&szlig;en
-      <div class="closing-name">Liza Hoffmann</div>
-    </div>
+    <div class="closing">Mit freundlichen Gr&uuml;&szlig;en<div class="closing-name">Liza Hoffmann</div></div>
   </div>
   <div class="footer">
     <div class="footer-line"></div>
-    <div class="footer-text">
-      <span>Liza Hoffmann &middot; Anschreiben 2026</span>
-      <span>Anlage: Lebenslauf</span>
-    </div>
+    <div class="footer-text"><span>Liza Hoffmann &middot; Anschreiben 2026</span><span>Anlage: Lebenslauf</span></div>
   </div>
 </div>
 </div>`
   },
   jamie: {
-    name: 'Jamie Zimmermann',
-    role: 'Service & Logistik',
-    initials: 'JZ',
+    name: 'Jamie Zimmermann', role: 'Service & Logistik', initials: 'JZ',
     body: `
 <div class="letter-root">
 <div class="page">
@@ -402,10 +340,7 @@ const LETTERS = {
   </header>
   <div class="letter-body">
     <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:32px;">
-      <div class="recipient">
-        <strong>[Unternehmen]</strong><br>
-        Personalverantwortliche/r<br>
-      </div>
+      <div class="recipient"><strong>[Unternehmen]</strong><br>Personalverantwortliche/r<br></div>
       <div class="date-line">Lemgo, Mai 2026</div>
     </div>
     <div class="l-subject">Initiativbewerbung</div>
@@ -418,33 +353,37 @@ const LETTERS = {
       <p>Ich bin teamf&auml;hig, schnell einzuarbeiten und bringe eine hohe Bereitschaft mit, mich auf neue Aufgaben und Umgebungen einzustellen. Ich besitze einen F&uuml;hrerschein der Klasse B und bin ab sofort verf&uuml;gbar.</p>
       <p>Ich freue mich auf die M&ouml;glichkeit, mich in einem pers&ouml;nlichen Gespr&auml;ch vorzustellen und bin &uuml;berzeugt, dass ich Ihrem Team einen echten Mehrwert bieten kann.</p>
     </div>
-    <div class="closing">
-      Mit freundlichen Gr&uuml;&szlig;en
-      <div class="closing-name">Jamie Zimmermann</div>
-    </div>
+    <div class="closing">Mit freundlichen Gr&uuml;&szlig;en<div class="closing-name">Jamie Zimmermann</div></div>
   </div>
   <div class="footer">
     <div class="footer-line"></div>
-    <div class="footer-text">
-      <span>Jamie Zimmermann &middot; Anschreiben 2026</span>
-      <span>Anlage: Lebenslauf</span>
-    </div>
+    <div class="footer-text"><span>Jamie Zimmermann &middot; Anschreiben 2026</span><span>Anlage: Lebenslauf</span></div>
   </div>
 </div>
 </div>`
   }
 };
 
-/* ---- State ---- */
 let editMode = false;
-let currentKey = null;          // 'liza' | 'jamie' | 'upload'
+let currentKey = null;
 let currentName = 'dokument';
-let uploadHead = '';            // styles from an uploaded file
-let saveTimer = null;
+let uploadHead = '';
+let draftTimer = null;
+const A4_WIDTH_PX = 793.7; // 210mm @ 96dpi
 
-const A4_WIDTH_PX = 793.7;      // 210mm @ 96dpi
+/* Draft = temporary unsaved work-in-progress (survives leaving/reloading).
+   It is cleared the moment a PDF is saved, so the ORIGINAL template returns. */
+function draftKey(key) { return 'anschreiben-entwurf:' + key; }
+function getDraft(key) { try { return localStorage.getItem(draftKey(key)); } catch (e) { return null; } }
+function saveDraft() {
+  if (!currentKey || currentKey === 'upload') return;
+  const frame = document.getElementById('doc-frame');
+  const clone = frame.cloneNode(true);
+  clone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+  try { localStorage.setItem(draftKey(currentKey), clone.innerHTML); } catch (e) {}
+}
+function clearDraft(key) { try { localStorage.removeItem(draftKey(key)); } catch (e) {} }
 
-/* Inject shared letter stylesheet once */
 (function injectBaseCSS() {
   const s = document.createElement('style');
   s.id = 'letter-base-css';
@@ -452,7 +391,6 @@ const A4_WIDTH_PX = 793.7;      // 210mm @ 96dpi
   document.head.appendChild(s);
 })();
 
-/* ---- Build picker cards ---- */
 function buildCards() {
   const cards = document.getElementById('cards');
   const loadCard = cards.querySelector('.card-load');
@@ -461,34 +399,35 @@ function buildCards() {
     const card = document.createElement('div');
     card.className = 'card';
     card.onclick = () => openLetter(key);
-    const edited = localStorage.getItem(storageKey(key));
     card.innerHTML =
       '<div class="card-avatar">' + l.initials + '</div>' +
       '<div class="card-name">' + l.name + '</div>' +
       '<div class="card-role">' + l.role + '</div>' +
-      '<div class="card-edited">' + (edited ? '✓ Gespeicherte Änderungen' : '') + '</div>';
+      '<div class="card-draft" data-key="' + key + '" style="font-size:0.66rem;color:var(--gold);min-height:0.9em;">' +
+        (getDraft(key) ? '✎ Entwurf wird fortgesetzt' : '') + '</div>';
     cards.insertBefore(card, loadCard);
   });
 }
 
-function storageKey(key) { return 'anschreiben:' + key; }
+function refreshDraftBadges() {
+  document.querySelectorAll('.card-draft').forEach(el => {
+    el.textContent = getDraft(el.getAttribute('data-key')) ? '✎ Entwurf wird fortgesetzt' : '';
+  });
+}
 
-/* ---- Open a built-in letter ---- */
+/* Built-in letters load the ORIGINAL template – unless an unsaved draft exists,
+   then the work-in-progress is restored (cleared again after PDF save). */
 function openLetter(key) {
   currentKey = key;
   const l = LETTERS[key];
   currentName = 'Anschreiben_' + l.name.replace(/\s+/g, '_');
   uploadHead = '';
-
-  const saved = localStorage.getItem(storageKey(key));
-  const frame = document.getElementById('doc-frame');
-  frame.innerHTML = saved || l.body;
-
+  const draft = getDraft(key);
+  document.getElementById('doc-frame').innerHTML = draft || l.body;
   enterWorkspace();
-  setStatus('Geladen: ' + l.name + (saved ? ' (gespeicherte Änderungen)' : ''));
+  setStatus(draft ? 'Entwurf fortgesetzt: ' + l.name : 'Geladen: ' + l.name + ' (Originalvorlage)');
 }
 
-/* ---- Open an uploaded HTML file ---- */
 function loadFile(file) {
   if (!file.name.match(/\.html?$/i)) { setStatus('Bitte eine HTML-Datei laden (.html)'); return; }
   currentKey = 'upload';
@@ -496,7 +435,6 @@ function loadFile(file) {
   const reader = new FileReader();
   reader.onload = e => {
     const doc = new DOMParser().parseFromString(e.target.result, 'text/html');
-    // grab styles
     uploadHead = '';
     doc.querySelectorAll('style, link[rel="stylesheet"]').forEach(s => uploadHead += s.outerHTML);
     document.querySelectorAll('[data-injected]').forEach(el => el.remove());
@@ -509,63 +447,51 @@ function loadFile(file) {
   };
   reader.readAsText(file);
 }
-
 document.getElementById('file-input').addEventListener('change', e => {
   if (e.target.files[0]) loadFile(e.target.files[0]);
   e.target.value = '';
 });
 
-/* ---- Workspace nav ---- */
 function enterWorkspace() {
   document.getElementById('picker').style.display = 'none';
   document.getElementById('workspace').classList.add('active');
   document.getElementById('back-btn').style.display = 'inline-block';
   document.getElementById('edit-toggle').style.display = 'inline-block';
   document.getElementById('save-btn').style.display = 'inline-block';
-  if (editMode) toggleEdit(); // start in view mode
-  requestAnimationFrame(scaleFrame);
+  if (editMode) toggleEdit();
+  // wait a frame so layout/fonts settle, then scale
+  requestAnimationFrame(() => requestAnimationFrame(scaleFrame));
 }
 
 function goHome() {
-  if (editMode) toggleEdit();
+  if (editMode) { saveDraft(); toggleEdit(); }
   document.getElementById('workspace').classList.remove('active');
   document.getElementById('picker').style.display = 'flex';
   document.getElementById('back-btn').style.display = 'none';
   document.getElementById('edit-toggle').style.display = 'none';
   document.getElementById('save-btn').style.display = 'none';
-  refreshCardBadges();
+  refreshDraftBadges();
   setStatus('Bereit');
 }
 
-function refreshCardBadges() {
-  document.querySelectorAll('#cards .card').forEach(card => {
-    const nameEl = card.querySelector('.card-name');
-    if (!nameEl) return;
-    const key = Object.keys(LETTERS).find(k => LETTERS[k].name === nameEl.textContent);
-    if (!key) return;
-    const badge = card.querySelector('.card-edited');
-    badge.textContent = localStorage.getItem(storageKey(key)) ? '✓ Gespeicherte Änderungen' : '';
-  });
-}
-
-/* ---- Dynamic scaling: fit A4 to viewport width, keep layout flow ---- */
+/* ---- Dynamic scaling: shrink A4 to fit viewport, size wrapper to scaled box ---- */
 function scaleFrame() {
   const ws = document.getElementById('workspace');
   if (!ws.classList.contains('active')) return;
   const scaleWrap = document.getElementById('doc-scale');
   const frame = document.getElementById('doc-frame');
 
-  const sidePad = window.innerWidth <= 768 ? 24 : 40; // matches .workspace horizontal padding *2-ish
-  const available = ws.clientWidth - sidePad;
+  const cs = getComputedStyle(ws);
+  const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+  const available = ws.clientWidth - padX;
 
-  let scale = 1;
-  if (A4_WIDTH_PX > available) scale = available / A4_WIDTH_PX;
+  const scale = Math.min(1, available / A4_WIDTH_PX);
 
   frame.style.width = A4_WIDTH_PX + 'px';
-  scaleWrap.style.transform = 'scale(' + scale + ')';
-  // Reserve correct space for the scaled element so scrolling works
-  scaleWrap.style.width = A4_WIDTH_PX + 'px';
-  const realH = frame.offsetHeight;
+  frame.style.transform = 'scale(' + scale + ')';
+
+  const realH = frame.offsetHeight;            // unscaled layout height
+  scaleWrap.style.width = (A4_WIDTH_PX * scale) + 'px';
   scaleWrap.style.height = (realH * scale) + 'px';
 }
 
@@ -574,8 +500,9 @@ window.addEventListener('resize', () => {
   cancelAnimationFrame(resizeRAF);
   resizeRAF = requestAnimationFrame(scaleFrame);
 });
+window.addEventListener('orientationchange', () => setTimeout(scaleFrame, 200));
 
-/* ---- Editing ---- */
+/* ---- Editing (temporary, only for the PDF) ---- */
 function toggleEdit() {
   editMode = !editMode;
   const frame = document.getElementById('doc-frame');
@@ -588,15 +515,15 @@ function toggleEdit() {
     btn.textContent = 'Bearbeiten: AN';
     btn.classList.remove('btn-outline'); btn.classList.add('btn-primary');
     hint.style.display = 'block';
-    setStatus('Bearbeitungsmodus aktiv');
+    setStatus('Bearbeitungsmodus aktiv (nur für dein PDF)');
   } else {
+    saveDraft();
     frame.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
     frame.classList.remove('editing');
     btn.textContent = 'Bearbeiten: AUS';
     btn.classList.add('btn-outline'); btn.classList.remove('btn-primary');
     hint.style.display = 'none';
-    persist(); // save on exit too
-    setStatus('Bearbeitung pausiert &mdash; gespeichert');
+    setStatus('Bearbeitung pausiert (Entwurf gesichert)');
   }
   requestAnimationFrame(scaleFrame);
 }
@@ -609,82 +536,81 @@ function makeEditable(root) {
   });
 }
 
-/* Auto-save edits (debounced) for built-in letters */
 document.getElementById('doc-frame').addEventListener('input', () => {
   if (!editMode) return;
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(persist, 600);
-  scaleFrame();
+  scaleFrame(); // keep wrapper height correct while typing
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(saveDraft, 500); // keep work-in-progress if user leaves
 });
 
-function persist() {
-  if (!currentKey || currentKey === 'upload') return; // uploads are not stored
-  const frame = document.getElementById('doc-frame');
-  // store a clean copy without editing attributes
-  const clone = frame.cloneNode(true);
-  clone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
-  localStorage.setItem(storageKey(currentKey), clone.innerHTML);
-  setStatus('Automatisch gespeichert &middot; ' + new Date().toLocaleTimeString('de-DE', {hour:'2-digit', minute:'2-digit'}));
-}
-
-/* ---- Reset to original (per person) ---- */
-function resetLetter() {
-  if (!currentKey || !LETTERS[currentKey]) return;
-  if (!confirm('Änderungen verwerfen und Originaltext wiederherstellen?')) return;
-  localStorage.removeItem(storageKey(currentKey));
-  document.getElementById('doc-frame').innerHTML = LETTERS[currentKey].body;
-  if (editMode) makeEditable(document.getElementById('doc-frame'));
-  requestAnimationFrame(scaleFrame);
-  setStatus('Originaltext wiederhergestellt');
-}
-window.resetLetter = resetLetter;
-
-/* ---- Save / Print as PDF (via hidden iframe – works on mobile, no popup) ---- */
+/* ---- Real PDF download (html2pdf) with print fallback ---- */
 function saveAsPDF() {
-  const frame = document.getElementById('doc-frame');
   if (editMode) toggleEdit();
-
+  const frame = document.getElementById('doc-frame');
   const clone = frame.cloneNode(true);
   clone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
 
+  const saveBtn = document.getElementById('save-btn');
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Erstelle PDF...';
+  const done = () => { saveBtn.disabled = false; saveBtn.textContent = 'PDF speichern'; };
+
+  // Render an off-screen, full-size copy (so the on-screen scaling doesn't affect the PDF)
+  const holder = document.createElement('div');
+  holder.style.cssText = 'position:fixed; left:-10000px; top:0; width:210mm; background:#fff;';
+  holder.appendChild(clone);
+  document.body.appendChild(holder);
+  const target = clone.querySelector('.page') || clone.querySelector('.letter-root') || clone;
+
+  if (typeof html2pdf === 'undefined') {
+    holder.remove(); printFallback(); done(); return;
+  }
+
+  html2pdf().set({
+    margin: 0,
+    filename: currentName + '.pdf',
+    image: { type: 'jpeg', quality: 0.98 },
+    html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', windowWidth: A4_WIDTH_PX },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+    pagebreak: { mode: ['avoid-all'] }
+  }).from(target).save()
+    .then(() => { afterSaved(); setStatus('PDF gespeichert: ' + currentName + '.pdf — Originalvorlage wiederhergestellt'); })
+    .catch(() => { setStatus('PDF fehlgeschlagen – Druckdialog wird geöffnet'); printFallback(); })
+    .finally(() => { holder.remove(); done(); });
+}
+
+/* After a successful save: discard the draft and restore the ORIGINAL template */
+function afterSaved() {
+  if (currentKey && LETTERS[currentKey]) {
+    clearDraft(currentKey);
+    document.getElementById('doc-frame').innerHTML = LETTERS[currentKey].body;
+    requestAnimationFrame(scaleFrame);
+  }
+}
+
+/* Fallback: native print (user chooses "Als PDF speichern") */
+function printFallback() {
+  const frame = document.getElementById('doc-frame');
+  const clone = frame.cloneNode(true);
+  clone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
   const headStyles = uploadHead ? uploadHead : '<style>' + LETTER_CSS + '</style>';
   const docHtml =
     '<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><title>' + currentName + '</title>' +
     headStyles + '<style>' + PRINT_CSS + '</style></head><body>' + clone.innerHTML + '</body></html>';
 
-  // Remove any previous print frame
-  const old = document.getElementById('print-frame');
-  if (old) old.remove();
-
+  const old = document.getElementById('print-frame'); if (old) old.remove();
   const iframe = document.createElement('iframe');
   iframe.id = 'print-frame';
-  iframe.setAttribute('aria-hidden', 'true');
   iframe.style.cssText = 'position:fixed; right:0; bottom:0; width:0; height:0; border:0; visibility:hidden;';
   document.body.appendChild(iframe);
-
   const idoc = iframe.contentWindow.document;
   idoc.open(); idoc.write(docHtml); idoc.close();
-
-  const triggerPrint = () => {
-    try {
-      iframe.contentWindow.focus();
-      iframe.contentWindow.print();
-    } catch (err) {
-      // Fallback for browsers that block iframe printing
-      const w = window.open('', '_blank');
-      if (w) { w.document.write(docHtml); w.document.close(); setTimeout(() => { w.focus(); w.print(); }, 400); }
-    }
-    setStatus('PDF-Dialog geöffnet &mdash; "Als PDF speichern" wählen');
-  };
-
-  // give the iframe time to render fonts/layout
-  if (iframe.contentWindow.document.readyState === 'complete') setTimeout(triggerPrint, 350);
-  else iframe.onload = () => setTimeout(triggerPrint, 350);
+  const go = () => { try { iframe.contentWindow.focus(); iframe.contentWindow.print(); } catch (e) {} };
+  if (idoc.readyState === 'complete') setTimeout(go, 350); else iframe.onload = () => setTimeout(go, 350);
 }
 
 function setStatus(msg) { document.getElementById('status').innerHTML = msg; }
 
-/* ---- Init ---- */
 buildCards();
 </script>
 
