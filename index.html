@@ -10,6 +10,14 @@
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
+  /* iOS Safari NICHT die Schriftgroessen automatisch aufblaehen lassen –
+     sonst "verspringt" das Layout nach einem Browser-Refresh. */
+  html {
+    -webkit-text-size-adjust: 100%;
+    -moz-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
   :root {
     --bg: #1a1a1a;
     --panel: #242424;
@@ -137,6 +145,8 @@
   .card-load .card-avatar { background: transparent; border: 1.5px dashed var(--border); color: var(--muted); }
 
   /* ---------- WORKSPACE ---------- */
+  /* Heller Hintergrund wie im Original-Anschreiben, damit die Vorschau
+     genauso aussieht wie die echte Vorlage. */
   .workspace {
     flex: 1;
     padding: 20px 12px calc(28px + var(--safe-bottom));
@@ -146,6 +156,7 @@
     overflow-y: auto;
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
+    background: #e8e6e1;
   }
   .workspace.active { display: flex; }
 
@@ -187,11 +198,13 @@
 
   @media print {
     @page { size: A4; margin: 0; }
-    html, body { background: #fff !important; margin: 0 !important; padding: 0 !important; }
-    body * { visibility: hidden !important; }
-    #print-area, #print-area * { visibility: visible !important; }
-    #print-area { left: 0 !important; top: 0 !important; width: 210mm !important; }
-    #print-area .page { box-shadow: none !important; width: 100% !important; min-height: 100vh !important; }
+    html, body { background: #fff !important; margin: 0 !important; padding: 0 !important; height: auto !important; }
+    /* App-Oberflaeche komplett ausblenden, damit keine leeren Seiten entstehen */
+    .topbar, .edit-hint, .picker, .workspace, .statusbar, #file-input { display: none !important; }
+    /* Nur den Druckbereich zeigen – im normalen Fluss, exakt A4 */
+    #print-area { position: static !important; left: auto !important; top: auto !important; width: 210mm !important; }
+    #print-area .page { box-shadow: none !important; width: 100% !important; min-height: auto !important; }
+    #print-area .page::before { display: none !important; }
   }
 </style>
 </head>
@@ -242,9 +255,34 @@
    ANSCHREIBEN EDITOR  –  Website (GitHub Pages)
    - Jamie & Liza fest eingebaut, Vorlage bleibt IMMER gleich
    - Bearbeiten nur fuer das PDF (nichts wird dauerhaft gespeichert)
-   - Echter PDF-Download (html2pdf) + Print-Fallback
+   - Als PDF speichern via nativem Druck (ohne externe Bibliothek)
    - Dynamische Skalierung fuer jedes Handy
    ============================================================ */
+
+/* Sicherheits-Sanitizer: entfernt <script>, Event-Handler (on*) und
+   javascript:-URLs aus nicht vertrauenswuerdigem HTML (Upload/Entwurf),
+   bevor es per innerHTML eingefuegt wird. <template> parst inert (kein
+   Laden/Ausfuehren waehrend der Pruefung). */
+function sanitizeHTML(html) {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = String(html);
+  tpl.content.querySelectorAll('script, iframe, object, embed, meta, base, link[rel="import"]').forEach(n => n.remove());
+  tpl.content.querySelectorAll('*').forEach(el => {
+    Array.from(el.attributes).forEach(attr => {
+      const name = attr.name.toLowerCase();
+      const val = (attr.value || '').replace(/[\u0000-\u001F\u00A0]+/g, '').trim();
+      if (name.startsWith('on')) el.removeAttribute(attr.name);
+      else if (name === 'srcdoc') el.removeAttribute(attr.name);
+      else if ((name === 'href' || name === 'src' || name === 'xlink:href' || name === 'formaction' || name === 'action') && /^javascript:/i.test(val)) el.removeAttribute(attr.name);
+      else if (name === 'style' && /expression\s*\(|javascript:/i.test(val)) el.removeAttribute(attr.name);
+    });
+  });
+  return tpl.innerHTML;
+}
+
+function removeInjectedStyles() {
+  document.querySelectorAll('[data-injected]').forEach(el => el.remove());
+}
 
 const LETTER_CSS = `
   .letter-root, .letter-root * { font-family: 'Gill Sans', 'Optima', 'Trebuchet MS', sans-serif; }
@@ -256,6 +294,7 @@ const LETTER_CSS = `
     --ink: #0f0f0e; --ink-muted: #6b6860; --ink-faint: #b0ada6;
     --paper: #faf9f7; --line: #dddbd6; --gold: #c9a96e;
     font-size: 10pt; color: var(--ink);
+    -webkit-text-size-adjust: 100%; text-size-adjust: 100%;
   }
   .letter-root .page {
     background: var(--paper); width: 210mm; min-height: 297mm;
@@ -384,18 +423,31 @@ let uploadHead = '';
 let draftTimer = null;
 const A4_WIDTH_PX = 793.7; // 210mm @ 96dpi
 
-/* Draft = temporary unsaved work-in-progress (survives leaving/reloading).
-   It is cleared the moment a PDF is saved, so the ORIGINAL template returns. */
+/* Draft = temporary unsaved work-in-progress.
+   Stored in sessionStorage: ueberlebt kurzes Weggehen / App-Wechsel (Tab bleibt
+   aktiv), wird aber beim vollstaendigen Schliessen automatisch geleert – so
+   bleibt die VORLAGE auf der Website dauerhaft im Original und kann nicht
+   "haengen bleiben". Nach dem PDF-Speichern wird der Entwurf ebenfalls verworfen. */
 function draftKey(key) { return 'anschreiben-entwurf:' + key; }
-function getDraft(key) { try { return localStorage.getItem(draftKey(key)); } catch (e) { return null; } }
+function getDraft(key) { try { return sessionStorage.getItem(draftKey(key)); } catch (e) { return null; } }
 function saveDraft() {
   if (!currentKey || currentKey === 'upload') return;
   const frame = document.getElementById('doc-frame');
   const clone = frame.cloneNode(true);
   clone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
-  try { localStorage.setItem(draftKey(currentKey), clone.innerHTML); } catch (e) {}
+  try { sessionStorage.setItem(draftKey(currentKey), sanitizeHTML(clone.innerHTML)); } catch (e) {}
 }
-function clearDraft(key) { try { localStorage.removeItem(draftKey(key)); } catch (e) {} }
+function clearDraft(key) { try { sessionStorage.removeItem(draftKey(key)); } catch (e) {} }
+
+/* Einmalig: alte, dauerhaft gespeicherte Entwuerfe aus localStorage entfernen
+   (frueheres Verhalten konnte Vorlagen "verstellt" erscheinen lassen). */
+(function clearLegacyDrafts() {
+  try {
+    Object.keys(localStorage).forEach(k => {
+      if (k.indexOf('anschreiben-entwurf:') === 0 || k.indexOf('anschreiben:') === 0) localStorage.removeItem(k);
+    });
+  } catch (e) {}
+})();
 
 (function injectBaseCSS() {
   const s = document.createElement('style');
@@ -435,8 +487,9 @@ function openLetter(key) {
   const l = LETTERS[key];
   currentName = 'Anschreiben_' + l.name.replace(/\s+/g, '_');
   uploadHead = '';
+  removeInjectedStyles(); // evtl. CSS einer zuvor geladenen Fremddatei entfernen
   const draft = getDraft(key);
-  document.getElementById('doc-frame').innerHTML = draft || l.body;
+  document.getElementById('doc-frame').innerHTML = draft ? sanitizeHTML(draft) : l.body;
   enterWorkspace();
   setStatus(draft ? 'Entwurf fortgesetzt: ' + l.name : 'Geladen: ' + l.name + ' (Originalvorlage)');
 }
@@ -449,12 +502,13 @@ function loadFile(file) {
   reader.onload = e => {
     const doc = new DOMParser().parseFromString(e.target.result, 'text/html');
     uploadHead = '';
-    doc.querySelectorAll('style, link[rel="stylesheet"]').forEach(s => uploadHead += s.outerHTML);
-    document.querySelectorAll('[data-injected]').forEach(el => el.remove());
-    doc.querySelectorAll('style, link[rel="stylesheet"]').forEach(s => {
+    // Nur eigene <style>-Bloecke uebernehmen (keine externen Skripte/Links)
+    doc.querySelectorAll('style').forEach(s => uploadHead += s.outerHTML);
+    removeInjectedStyles();
+    doc.querySelectorAll('style').forEach(s => {
       const c = s.cloneNode(true); c.setAttribute('data-injected', 'true'); document.head.appendChild(c);
     });
-    document.getElementById('doc-frame').innerHTML = doc.body.innerHTML;
+    document.getElementById('doc-frame').innerHTML = sanitizeHTML(doc.body.innerHTML);
     enterWorkspace();
     setStatus('Geladen: ' + file.name);
   };
@@ -474,6 +528,9 @@ function enterWorkspace() {
   if (editMode) toggleEdit();
   // wait a frame so layout/fonts settle, then scale
   requestAnimationFrame(() => requestAnimationFrame(scaleFrame));
+  // Nachberechnen, sobald Schriften geladen sind (verhindert "haengende" Halb-Ansicht)
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(scaleFrame).catch(() => {});
+  setTimeout(scaleFrame, 300);
 }
 
 function goHome() {
@@ -487,33 +544,56 @@ function goHome() {
   setStatus('Bereit');
 }
 
-/* ---- Dynamic scaling: shrink A4 to fit viewport, size wrapper to scaled box ---- */
+/* ---- Dynamische Skalierung: A4 auf die Viewport-Breite verkleinern und den
+   Wrapper auf die skalierte Groesse setzen (damit Zentrierung/Scroll stimmen).
+   Defensiv gegen 0/ungueltige Breiten waehrend des Ladens. ---- */
 function scaleFrame() {
   const ws = document.getElementById('workspace');
   if (!ws.classList.contains('active')) return;
   const scaleWrap = document.getElementById('doc-scale');
   const frame = document.getElementById('doc-frame');
+  if (!scaleWrap || !frame) return;
 
   const cs = getComputedStyle(ws);
   const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
-  const available = ws.clientWidth - padX;
 
-  const scale = Math.min(1, available / A4_WIDTH_PX);
+  // bevorzugt die echte Inhaltsbreite; Fallbacks fuer iOS-Ladephasen
+  let available = ws.clientWidth - padX;
+  if (!available || available < 1) {
+    const vv = window.visualViewport ? window.visualViewport.width : 0;
+    available = (vv || window.innerWidth || A4_WIDTH_PX) - padX;
+  }
+
+  let scale = available / A4_WIDTH_PX;
+  if (!isFinite(scale) || scale <= 0) scale = 1;
+  scale = Math.min(1, scale);
 
   frame.style.width = A4_WIDTH_PX + 'px';
   frame.style.transform = 'scale(' + scale + ')';
 
-  const realH = frame.offsetHeight;            // unscaled layout height
+  const realH = frame.offsetHeight;            // unskalierte Layout-Hoehe
   scaleWrap.style.width = (A4_WIDTH_PX * scale) + 'px';
   scaleWrap.style.height = (realH * scale) + 'px';
 }
 
 let resizeRAF = null;
-window.addEventListener('resize', () => {
+function requestScale() {
   cancelAnimationFrame(resizeRAF);
   resizeRAF = requestAnimationFrame(scaleFrame);
-});
+}
+window.addEventListener('resize', requestScale);
 window.addEventListener('orientationchange', () => setTimeout(scaleFrame, 200));
+window.addEventListener('load', () => { if (document.getElementById('workspace').classList.contains('active')) scaleFrame(); });
+window.addEventListener('pageshow', () => { if (document.getElementById('workspace').classList.contains('active')) scaleFrame(); });
+if (window.visualViewport) window.visualViewport.addEventListener('resize', requestScale);
+
+/* Universellster Mechanismus fuer JEDES Geraet (Android + iPhone + Desktop):
+   beobachtet die tatsaechliche Breite des Arbeitsbereichs und skaliert bei
+   jeder Aenderung automatisch neu – unabhaengig von Events/Browser-Eigenheiten. */
+if (window.ResizeObserver) {
+  const ro = new ResizeObserver(() => requestScale());
+  ro.observe(document.getElementById('workspace'));
+}
 
 /* ---- Editing (temporary, only for the PDF) ---- */
 function toggleEdit() {
@@ -558,9 +638,13 @@ document.getElementById('doc-frame').addEventListener('input', () => {
 
 /* ---- Als PDF speichern via nativem Druck ----
    Funktioniert auf JEDEM Geraet (iPhone, Android, Desktop) ohne Bibliothek:
-   Der Browser rendert die Seite und bietet im Dialog "Als PDF speichern". */
+   Der Browser rendert die Seite und bietet im Dialog "Als PDF speichern".
+   Wichtig (iOS): NICHT per Timer aufraeumen – das wuerde den Druckbereich
+   loeschen, waehrend die Druckvorschau noch offen ist (weisses PDF). Stattdessen
+   erst nach Schliessen des Dialogs (afterprint / Rueckkehr zur Seite). */
 let restoreTitle = '';
-let saveRestoreTimer = null;
+let pendingRestore = false;
+let printStartedAt = 0;
 
 function saveAsPDF() {
   if (editMode) toggleEdit();
@@ -569,37 +653,46 @@ function saveAsPDF() {
   const frame = document.getElementById('doc-frame');
   const clone = frame.cloneNode(true);
   clone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
-  clone.style.transform = 'none';
-  clone.style.width = '210mm';
 
   const printArea = document.getElementById('print-area');
   printArea.innerHTML = '';
-  // nur den eigentlichen Brief-Inhalt uebernehmen
   Array.from(clone.childNodes).forEach(n => printArea.appendChild(n.cloneNode(true)));
 
   // Dateiname im PDF = Dokumenttitel (Browser nutzt ihn als Vorschlag)
   restoreTitle = document.title;
   document.title = currentName;
+  pendingRestore = true;
 
-  setStatus('PDF-Dialog wird geöffnet — "Als PDF speichern" wählen');
+  setStatus('PDF-Dialog wird geoeffnet — "Als PDF speichern" waehlen');
 
   // kurz warten, damit der Druckbereich gerendert ist (wichtig fuer iOS)
   setTimeout(() => {
-    window.focus();
+    printStartedAt = Date.now();
     window.print();
-    // Aufraeumen + Originalvorlage zurueck (Fallback, falls afterprint nicht feuert)
-    clearTimeout(saveRestoreTimer);
-    saveRestoreTimer = setTimeout(finishSave, 800);
+    // Desktop blockiert hier bis der Dialog geschlossen wird -> afterprint feuert.
+    // Mobile kehrt sofort zurueck -> Aufraeumen via focus/visibility (s.u.).
   }, 150);
 }
 
-window.addEventListener('afterprint', () => { clearTimeout(saveRestoreTimer); finishSave(); });
-
+/* Aufraeumen erst NACH dem Schliessen des Druck-/Teilen-Dialogs */
 function finishSave() {
+  if (!pendingRestore) return;             // idempotent (nur einmal ausfuehren)
+  pendingRestore = false;
   if (restoreTitle) { document.title = restoreTitle; restoreTitle = ''; }
   document.getElementById('print-area').innerHTML = '';
   afterSaved();
 }
+
+/* Wird gerufen, wenn die Seite nach dem Dialog wieder Fokus/Sichtbarkeit erhaelt */
+function maybeFinishAfterReturn() {
+  if (pendingRestore && Date.now() - printStartedAt > 250) finishSave();
+}
+
+window.addEventListener('afterprint', finishSave);                 // Desktop, Android, modernes Safari
+window.addEventListener('focus', maybeFinishAfterReturn);          // Fallback iOS/mobil
+document.addEventListener('visibilitychange', () => {              // Fallback iOS/mobil
+  if (document.visibilityState === 'visible') maybeFinishAfterReturn();
+});
 
 /* Nach dem Speichern: Entwurf verwerfen und ORIGINAL-Vorlage wiederherstellen */
 function afterSaved() {
@@ -611,7 +704,8 @@ function afterSaved() {
   }
 }
 
-function setStatus(msg) { document.getElementById('status').innerHTML = msg; }
+/* textContent statt innerHTML: verhindert XSS ueber Datei-/Personennamen */
+function setStatus(msg) { document.getElementById('status').textContent = msg; }
 
 buildCards();
 </script>
