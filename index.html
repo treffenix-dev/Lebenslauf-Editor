@@ -7,8 +7,6 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#1a1a1a">
 <title>Anschreiben Editor</title>
-<!-- html2pdf fuer echten PDF-Download (mit Print-Fallback) -->
-<script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
@@ -55,8 +53,12 @@
     color: var(--gold);
     letter-spacing: 1px;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;          /* darf schrumpfen statt zu ueberlaufen */
+    flex: 0 1 auto;
   }
-  .topbar-actions { margin-left: auto; display: flex; gap: 8px; }
+  .topbar-actions { margin-left: auto; display: flex; gap: 8px; flex-shrink: 0; }
 
   .btn {
     padding: 10px 14px;
@@ -178,6 +180,19 @@
     .topbar h1 { font-size: 0.95rem; letter-spacing: 0.5px; }
     .btn { padding: 9px 11px; font-size: 0.64rem; letter-spacing: 0.6px; }
   }
+
+  /* ---------- PRINT AREA (für "Als PDF speichern") ---------- */
+  /* Off-screen on screen view; becomes the only visible thing when printing. */
+  #print-area { position: absolute; left: -99999px; top: 0; width: 210mm; }
+
+  @media print {
+    @page { size: A4; margin: 0; }
+    html, body { background: #fff !important; margin: 0 !important; padding: 0 !important; }
+    body * { visibility: hidden !important; }
+    #print-area, #print-area * { visibility: visible !important; }
+    #print-area { left: 0 !important; top: 0 !important; width: 210mm !important; }
+    #print-area .page { box-shadow: none !important; width: 100% !important; min-height: 100vh !important; }
+  }
 </style>
 </head>
 <body>
@@ -188,8 +203,8 @@
   <button class="btn btn-outline btn-icon" id="back-btn" onclick="goHome()" style="display:none;">&larr;</button>
   <h1>Anschreiben Editor</h1>
   <div class="topbar-actions">
-    <button class="btn btn-outline" id="edit-toggle" onclick="toggleEdit()" style="display:none;">Bearbeiten: AUS</button>
-    <button class="btn btn-primary" id="save-btn" onclick="saveAsPDF()" style="display:none;">PDF speichern</button>
+    <button class="btn btn-outline" id="edit-toggle" onclick="toggleEdit()" style="display:none;">Bearbeiten</button>
+    <button class="btn btn-primary" id="save-btn" onclick="saveAsPDF()" style="display:none;">PDF</button>
   </div>
 </div>
 
@@ -216,6 +231,9 @@
     <div id="doc-frame"></div>
   </div>
 </div>
+
+<!-- Wird nur beim Drucken/PDF-Speichern sichtbar -->
+<div id="print-area" aria-hidden="true"></div>
 
 <div class="statusbar" id="status">Bereit</div>
 
@@ -269,11 +287,6 @@ const LETTER_CSS = `
   .letter-root .footer-text { display: flex; justify-content: space-between; font-size: 7pt; color: var(--ink-faint); letter-spacing: 0.5px; }
 `;
 
-const PRINT_CSS = `
-  @page { size: A4; margin: 0; }
-  html, body { margin: 0; padding: 0; background: #fff; }
-  .letter-root .page { box-shadow: none; width: 100%; min-height: 100vh; }
-`;
 
 const LETTERS = {
   liza: {
@@ -512,7 +525,7 @@ function toggleEdit() {
   if (editMode) {
     makeEditable(frame);
     frame.classList.add('editing');
-    btn.textContent = 'Bearbeiten: AN';
+    btn.textContent = 'Fertig';
     btn.classList.remove('btn-outline'); btn.classList.add('btn-primary');
     hint.style.display = 'block';
     setStatus('Bearbeitungsmodus aktiv (nur für dein PDF)');
@@ -520,7 +533,7 @@ function toggleEdit() {
     saveDraft();
     frame.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
     frame.classList.remove('editing');
-    btn.textContent = 'Bearbeiten: AUS';
+    btn.textContent = 'Bearbeiten';
     btn.classList.add('btn-outline'); btn.classList.remove('btn-primary');
     hint.style.display = 'none';
     setStatus('Bearbeitung pausiert (Entwurf gesichert)');
@@ -543,70 +556,59 @@ document.getElementById('doc-frame').addEventListener('input', () => {
   draftTimer = setTimeout(saveDraft, 500); // keep work-in-progress if user leaves
 });
 
-/* ---- Real PDF download (html2pdf) with print fallback ---- */
+/* ---- Als PDF speichern via nativem Druck ----
+   Funktioniert auf JEDEM Geraet (iPhone, Android, Desktop) ohne Bibliothek:
+   Der Browser rendert die Seite und bietet im Dialog "Als PDF speichern". */
+let restoreTitle = '';
+let saveRestoreTimer = null;
+
 function saveAsPDF() {
   if (editMode) toggleEdit();
+
+  // saubere Kopie des Anschreibens (ohne Bearbeiten-Marker) in den Druckbereich
   const frame = document.getElementById('doc-frame');
   const clone = frame.cloneNode(true);
   clone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+  clone.style.transform = 'none';
+  clone.style.width = '210mm';
 
-  const saveBtn = document.getElementById('save-btn');
-  saveBtn.disabled = true;
-  saveBtn.textContent = 'Erstelle PDF...';
-  const done = () => { saveBtn.disabled = false; saveBtn.textContent = 'PDF speichern'; };
+  const printArea = document.getElementById('print-area');
+  printArea.innerHTML = '';
+  // nur den eigentlichen Brief-Inhalt uebernehmen
+  Array.from(clone.childNodes).forEach(n => printArea.appendChild(n.cloneNode(true)));
 
-  // Render an off-screen, full-size copy (so the on-screen scaling doesn't affect the PDF)
-  const holder = document.createElement('div');
-  holder.style.cssText = 'position:fixed; left:-10000px; top:0; width:210mm; background:#fff;';
-  holder.appendChild(clone);
-  document.body.appendChild(holder);
-  const target = clone.querySelector('.page') || clone.querySelector('.letter-root') || clone;
+  // Dateiname im PDF = Dokumenttitel (Browser nutzt ihn als Vorschlag)
+  restoreTitle = document.title;
+  document.title = currentName;
 
-  if (typeof html2pdf === 'undefined') {
-    holder.remove(); printFallback(); done(); return;
-  }
+  setStatus('PDF-Dialog wird geöffnet — "Als PDF speichern" wählen');
 
-  html2pdf().set({
-    margin: 0,
-    filename: currentName + '.pdf',
-    image: { type: 'jpeg', quality: 0.98 },
-    html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', windowWidth: A4_WIDTH_PX },
-    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-    pagebreak: { mode: ['avoid-all'] }
-  }).from(target).save()
-    .then(() => { afterSaved(); setStatus('PDF gespeichert: ' + currentName + '.pdf — Originalvorlage wiederhergestellt'); })
-    .catch(() => { setStatus('PDF fehlgeschlagen – Druckdialog wird geöffnet'); printFallback(); })
-    .finally(() => { holder.remove(); done(); });
+  // kurz warten, damit der Druckbereich gerendert ist (wichtig fuer iOS)
+  setTimeout(() => {
+    window.focus();
+    window.print();
+    // Aufraeumen + Originalvorlage zurueck (Fallback, falls afterprint nicht feuert)
+    clearTimeout(saveRestoreTimer);
+    saveRestoreTimer = setTimeout(finishSave, 800);
+  }, 150);
 }
 
-/* After a successful save: discard the draft and restore the ORIGINAL template */
+window.addEventListener('afterprint', () => { clearTimeout(saveRestoreTimer); finishSave(); });
+
+function finishSave() {
+  if (restoreTitle) { document.title = restoreTitle; restoreTitle = ''; }
+  document.getElementById('print-area').innerHTML = '';
+  afterSaved();
+}
+
+/* Nach dem Speichern: Entwurf verwerfen und ORIGINAL-Vorlage wiederherstellen */
 function afterSaved() {
   if (currentKey && LETTERS[currentKey]) {
     clearDraft(currentKey);
     document.getElementById('doc-frame').innerHTML = LETTERS[currentKey].body;
     requestAnimationFrame(scaleFrame);
+    setStatus('Gespeichert — Originalvorlage wiederhergestellt');
   }
-}
-
-/* Fallback: native print (user chooses "Als PDF speichern") */
-function printFallback() {
-  const frame = document.getElementById('doc-frame');
-  const clone = frame.cloneNode(true);
-  clone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
-  const headStyles = uploadHead ? uploadHead : '<style>' + LETTER_CSS + '</style>';
-  const docHtml =
-    '<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><title>' + currentName + '</title>' +
-    headStyles + '<style>' + PRINT_CSS + '</style></head><body>' + clone.innerHTML + '</body></html>';
-
-  const old = document.getElementById('print-frame'); if (old) old.remove();
-  const iframe = document.createElement('iframe');
-  iframe.id = 'print-frame';
-  iframe.style.cssText = 'position:fixed; right:0; bottom:0; width:0; height:0; border:0; visibility:hidden;';
-  document.body.appendChild(iframe);
-  const idoc = iframe.contentWindow.document;
-  idoc.open(); idoc.write(docHtml); idoc.close();
-  const go = () => { try { iframe.contentWindow.focus(); iframe.contentWindow.print(); } catch (e) {} };
-  if (idoc.readyState === 'complete') setTimeout(go, 350); else iframe.onload = () => setTimeout(go, 350);
 }
 
 function setStatus(msg) { document.getElementById('status').innerHTML = msg; }
