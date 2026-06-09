@@ -7,6 +7,8 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#1a1a1a">
 <title>Anschreiben Editor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
@@ -192,19 +194,61 @@
     .btn { padding: 9px 11px; font-size: 0.64rem; letter-spacing: 0.6px; }
   }
 
-  /* ---------- PRINT AREA (für "Als PDF speichern") ---------- */
-  /* Off-screen on screen view; becomes the only visible thing when printing. */
-  #print-area { position: absolute; left: -99999px; top: 0; width: 210mm; }
+  /* ---------- DRUCK / "ALS PDF SPEICHERN" ----------
+     Sorgt fuer GENAU EINE saubere A4-Seite:
+     - @page margin:0  -> Browser laesst Kopf-/Fusszeile (URL, Datum, Uhrzeit,
+       "Seite 1 von 2") weg, weil kein Rand dafuer reserviert ist.
+     - feste 210x297mm + overflow:hidden -> kein Ueberlauf auf eine 2. Seite,
+       nichts wird abgeschnitten.
+     - print-color-adjust:exact -> Farbflaechen (schwarzer Balken, Gold)
+       werden wirklich mitgedruckt.
+     - App-Bedienelemente werden ausgeblendet, nur das Blatt bleibt. */
+  @page { size: A4 portrait; margin: 0; }
 
   @media print {
-    @page { size: A4; margin: 0; }
-    html, body { background: #fff !important; margin: 0 !important; padding: 0 !important; height: auto !important; }
-    /* App-Oberflaeche komplett ausblenden, damit keine leeren Seiten entstehen */
-    .topbar, .edit-hint, .picker, .workspace, .statusbar, #file-input { display: none !important; }
-    /* Nur den Druckbereich zeigen – im normalen Fluss, exakt A4 */
-    #print-area { position: static !important; left: auto !important; top: auto !important; width: 210mm !important; }
-    #print-area .page { box-shadow: none !important; width: 100% !important; min-height: auto !important; }
-    #print-area .page::before { display: none !important; }
+    html, body {
+      width: 210mm;
+      margin: 0 !important;
+      padding: 0 !important;
+      background: #fff !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    body { display: block !important; min-height: 0 !important; }
+
+    /* App-Oberflaeche raus – nur das Dokument drucken */
+    .topbar, .edit-hint, .statusbar, .picker, #file-input { display: none !important; }
+
+    .workspace {
+      display: block !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      overflow: visible !important;
+      background: #fff !important;
+    }
+    #doc-scale {
+      width: auto !important;
+      height: auto !important;
+      margin: 0 !important;
+    }
+    /* Bildschirm-Verkleinerung aufheben -> volle A4-Breite drucken */
+    #doc-frame {
+      transform: none !important;
+      width: 210mm !important;
+      margin: 0 !important;
+      box-shadow: none !important;
+    }
+    /* Eingebaute Vorlagen: exakt ein A4-Blatt */
+    .letter-root .page {
+      width: 210mm !important;
+      height: 297mm !important;
+      margin: 0 !important;
+      box-shadow: none !important;
+      overflow: hidden !important;
+    }
+    .letter-root .page::before { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    /* Eigene Uploads: auf A4-Breite begrenzen, damit nichts ueber den Rand laeuft */
+    .doc-upload-scope { width: 210mm !important; max-width: 210mm !important; }
   }
 </style>
 </head>
@@ -244,9 +288,6 @@
     <div id="doc-frame"></div>
   </div>
 </div>
-
-<!-- Wird nur beim Drucken/PDF-Speichern sichtbar -->
-<div id="print-area" aria-hidden="true"></div>
 
 <div class="statusbar" id="status">Bereit</div>
 
@@ -297,7 +338,7 @@ const LETTER_CSS = `
     -webkit-text-size-adjust: 100%; text-size-adjust: 100%;
   }
   .letter-root .page {
-    background: var(--paper); width: 210mm; min-height: 297mm;
+    background: var(--paper); width: 210mm; height: 297mm;
     position: relative; overflow: hidden; display: flex; flex-direction: column;
   }
   .letter-root .page::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--ink); }
@@ -316,11 +357,11 @@ const LETTER_CSS = `
   .letter-root .l-subject { font-size: 15pt; font-weight: 500; color: var(--ink); margin-bottom: 6px; line-height: 1.3; }
   .letter-root .subject-sub { font-size: 8pt; letter-spacing: 2px; text-transform: uppercase; color: var(--gold); margin-bottom: 32px; }
   .letter-root .divider { height: 0.5px; background: var(--line); margin-bottom: 28px; }
-  .letter-root .letter-text { font-size: 9.5pt; color: var(--ink-muted); line-height: 1.85; flex: 1; }
+  .letter-root .letter-text { font-size: 9.5pt; color: var(--ink-muted); line-height: 1.85; }
   .letter-root .letter-text p { margin-bottom: 16px; }
   .letter-root .letter-text p:last-child { margin-bottom: 0; }
-  .letter-root .closing { margin-top: 36px; font-size: 9.5pt; color: var(--ink-muted); line-height: 1.8; }
-  .letter-root .closing-name { font-size: 13pt; font-weight: 500; color: var(--ink); margin-top: 36px; }
+  .letter-root .closing { margin-top: 22px; font-size: 9.5pt; color: var(--ink-muted); line-height: 1.8; }
+  .letter-root .closing-name { font-size: 13pt; font-weight: 500; color: var(--ink); margin-top: 12px; }
   .letter-root .footer { padding: 0 52px 24px 56px; }
   .letter-root .footer-line { height: 0.5px; background: var(--line); margin-bottom: 14px; }
   .letter-root .footer-text { display: flex; justify-content: space-between; font-size: 7pt; color: var(--ink-faint); letter-spacing: 0.5px; }
@@ -502,13 +543,24 @@ function loadFile(file) {
   reader.onload = e => {
     const doc = new DOMParser().parseFromString(e.target.result, 'text/html');
     uploadHead = '';
-    // Nur eigene <style>-Bloecke uebernehmen (keine externen Skripte/Links)
-    doc.querySelectorAll('style').forEach(s => uploadHead += s.outerHTML);
     removeInjectedStyles();
+    // Nur eigene <style>-Bloecke uebernehmen (keine externen Skripte/Links).
+    // body/html-Regeln der Fremddatei (padding, background, flex, align) wuerden
+    // die Vorschau/Skalierung verfaelschen -> auf .doc-upload-scope umschreiben,
+    // sodass nur der Dokument-Inhalt gestaltet wird, nicht unsere App.
     doc.querySelectorAll('style').forEach(s => {
-      const c = s.cloneNode(true); c.setAttribute('data-injected', 'true'); document.head.appendChild(c);
+      let css = s.textContent || '';
+      // body/html-Selektoren entschaerfen
+      css = css.replace(/(^|[},])\s*(html\s*,\s*body|body\s*,\s*html|body|html)\s*(?=[,{])/g,
+        '$1 .doc-upload-scope ');
+      const c = document.createElement('style');
+      c.setAttribute('data-injected', 'true');
+      c.textContent = css;
+      document.head.appendChild(c);
+      uploadHead += '<style>' + css + '</style>';
     });
-    document.getElementById('doc-frame').innerHTML = sanitizeHTML(doc.body.innerHTML);
+    document.getElementById('doc-frame').innerHTML =
+      '<div class="doc-upload-scope">' + sanitizeHTML(doc.body.innerHTML) + '</div>';
     enterWorkspace();
     setStatus('Geladen: ' + file.name);
   };
@@ -564,15 +616,28 @@ function scaleFrame() {
     available = (vv || window.innerWidth || A4_WIDTH_PX) - padX;
   }
 
-  let scale = available / A4_WIDTH_PX;
+  // Echte Breite des Dokuments messen (eingebaute Vorlage ODER eigene Upload-HTML).
+  // So skaliert JEDES Dokument korrekt, egal welche Innenmasse es hat.
+  frame.style.transform = 'none';
+  frame.style.width = '';
+  let contentWidth = frame.scrollWidth || A4_WIDTH_PX;
+  // .page-Element bevorzugen, falls vorhanden (exakte A4-Breite)
+  const pageEl = frame.querySelector('.page');
+  if (pageEl) {
+    const pw = pageEl.getBoundingClientRect().width;
+    if (pw && pw > 1) contentWidth = pw;
+  }
+  if (!contentWidth || contentWidth < 1) contentWidth = A4_WIDTH_PX;
+
+  let scale = available / contentWidth;
   if (!isFinite(scale) || scale <= 0) scale = 1;
   scale = Math.min(1, scale);
 
-  frame.style.width = A4_WIDTH_PX + 'px';
+  frame.style.width = contentWidth + 'px';
   frame.style.transform = 'scale(' + scale + ')';
 
   const realH = frame.offsetHeight;            // unskalierte Layout-Hoehe
-  scaleWrap.style.width = (A4_WIDTH_PX * scale) + 'px';
+  scaleWrap.style.width = (contentWidth * scale) + 'px';
   scaleWrap.style.height = (realH * scale) + 'px';
 }
 
@@ -636,68 +701,120 @@ document.getElementById('doc-frame').addEventListener('input', () => {
   draftTimer = setTimeout(saveDraft, 500); // keep work-in-progress if user leaves
 });
 
-/* ---- Als PDF speichern via nativem Druck ----
-   Funktioniert auf JEDEM Geraet (iPhone, Android, Desktop) ohne Bibliothek:
-   Der Browser rendert die Seite und bietet im Dialog "Als PDF speichern".
-   Wichtig (iOS): NICHT per Timer aufraeumen – das wuerde den Druckbereich
-   loeschen, waehrend die Druckvorschau noch offen ist (weisses PDF). Stattdessen
-   erst nach Schliessen des Dialogs (afterprint / Rueckkehr zur Seite). */
-let restoreTitle = '';
-let pendingRestore = false;
-let printArmed = false;
+/* ---- Als PDF speichern: PDF wird von der APP SELBST erzeugt ----
+   WICHTIG: bewusst NICHT ueber den Browser-Druck (window.print).
+   Grund: Der Browser-Druckdialog blendet auf dem Handy (v.a. Android-Chrome)
+   IMMER seine eigene Kopf-/Fusszeile ein -> URL/GitHub-Link, Datum, Uhrzeit,
+   "Seite 1 von 2". Das laesst sich per CSS NICHT zuverlaessig abschalten.
+   Deshalb wird hier das A4-Blatt mit html2canvas als Bild aufgenommen und mit
+   jsPDF in EIN exaktes A4-PDF (210x297mm, eine Seite) gelegt.
+   Ergebnis: KEIN Link, KEIN Datum/Uhrzeit, KEINE Seitenzahl, garantiert 1 Seite.
 
-function saveAsPDF() {
+   AUSLIEFERUNG (mobil optimiert):
+   - iOS/iPhone: jsPDF.save() zeigt nur eine Inline-Vorschau ("nur ein Bild"),
+     ohne echte Speichern/Drucken-Option. Deshalb auf iOS das NATIVE Teilen-Menue
+     (navigator.share mit Datei) -> "In Dateien sichern", Drucken, Mail, AirDrop.
+   - Android/Desktop: echter Datei-Download (<a download>), zusaetzlich Teilen
+     als Fallback. So funktioniert das Speichern auf JEDEM Geraet. */
+const A4_HEIGHT_PX = 1122.5; // 297mm @ 96dpi
+
+function isMobileDevice() {
+  return /Android|iPhone|iPad|iPod|Mobile|Silk/i.test(navigator.userAgent)
+      || Math.min(screen.width, screen.height) < 820;
+}
+function isIOS() {
+  return /iPhone|iPad|iPod/i.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); // iPadOS
+}
+
+/* Liefert das fertige PDF geraetegerecht aus. Reihenfolge je Plattform so
+   gewaehlt, dass IMMER eine echte Speichern-/Druckmoeglichkeit erscheint. */
+async function deliverPDF(blob, fileName, pdf) {
+  const file = new File([blob], fileName, { type: 'application/pdf' });
+  const canShareFile = !!(navigator.canShare && navigator.canShare({ files: [file] }));
+
+  const tryShare = async () => {
+    try { await navigator.share({ files: [file], title: fileName }); setStatus('Gespeichert/Geteilt: ' + fileName); return true; }
+    catch (e) { if (e && e.name === 'AbortError') { setStatus('Abgebrochen'); return true; } return false; }
+  };
+  const tryDownload = () => {
+    try {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = fileName; a.rel = 'noopener';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      setStatus('PDF gespeichert: ' + fileName); return true;
+    } catch (e) { return false; }
+  };
+  const tryOpen = () => {
+    try { window.open(pdf.output('bloburl'), '_blank'); setStatus('PDF geoeffnet — ueber Teilen sichern.'); return true; }
+    catch (e) { return false; }
+  };
+
+  // iOS: Teilen ist die EINZIGE zuverlaessige Speichermoeglichkeit -> zuerst.
+  if (isIOS() && canShareFile) { if (await tryShare()) return; }
+  // Android/Desktop: direkter Download -> sonst Teilen -> sonst neuer Tab.
+  if (tryDownload()) return;
+  if (canShareFile && await tryShare()) return;
+  if (tryOpen()) return;
+  setStatus('Konnte PDF nicht ausliefern — bitte erneut versuchen.');
+}
+
+/* async, OHNE setTimeout: haelt die "user activation" des Tipps am Leben,
+   damit navigator.share auf iOS nicht mit NotAllowedError abbricht. */
+async function saveAsPDF() {
   if (editMode) toggleEdit();
 
-  // saubere Kopie des Anschreibens (ohne Bearbeiten-Marker) in den Druckbereich
+  if (!window.html2canvas || !(window.jspdf && window.jspdf.jsPDF)) {
+    setStatus('PDF-Modul noch nicht geladen — kurz Internet pruefen und erneut tippen.');
+    return;
+  }
+
   const frame = document.getElementById('doc-frame');
-  const clone = frame.cloneNode(true);
+  const sourcePage = frame.querySelector('.page') || frame;       // A4-Blatt finden
+  const scopeClass = frame.firstElementChild ? frame.firstElementChild.className : 'letter-root';
+
+  // saubere A4-Kopie ohne Bearbeiten-Marker / Skalierung
+  const clone = sourcePage.cloneNode(true);
   clone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+  clone.style.transform = 'none';
+  clone.style.margin = '0';
+  clone.style.width = A4_WIDTH_PX + 'px';
+  clone.style.height = A4_HEIGHT_PX + 'px';
+  clone.style.boxShadow = 'none';
+  clone.style.overflow = 'hidden';
 
-  const printArea = document.getElementById('print-area');
-  printArea.innerHTML = '';
-  Array.from(clone.childNodes).forEach(n => printArea.appendChild(n.cloneNode(true)));
+  // Sichtbar (nicht off-screen) rendern -> verhindert leere/weisse Captures.
+  const holder = document.createElement('div');
+  holder.className = scopeClass;
+  holder.style.cssText = 'position:fixed;left:0;top:0;z-index:2147483647;background:#fff;'
+    + 'width:' + A4_WIDTH_PX + 'px;height:' + A4_HEIGHT_PX + 'px;overflow:hidden;';
+  holder.appendChild(clone);
+  document.body.appendChild(holder);
 
-  // Dateiname im PDF = Dokumenttitel (Browser nutzt ihn als Vorschlag)
-  restoreTitle = document.title;
-  document.title = currentName;
-  pendingRestore = true;
-  printArmed = true;
+  setStatus('PDF wird erstellt …');
 
-  setStatus('PDF-Dialog wird geoeffnet — "Als PDF speichern" waehlen');
+  // Auf dem Handy kleinere Aufloesung -> kein Speicher-Crash / weisser Screen
+  const scale = isMobileDevice() ? 2 : 3;
+  const cleanup = () => { if (holder.parentNode) document.body.removeChild(holder); };
 
-  // SYNCHRON drucken: erhaelt die iOS-User-Geste; der Inhalt ist bereits im DOM,
-  // der Browser baut das Druck-Layout beim Aufruf selbst auf.
-  window.print();
-}
-
-/* WICHTIG: Den Druckbereich NIEMALS hier leeren! Er bleibt off-screen liegen und
-   wird erst beim naechsten Speichern (oben) ueberschrieben. So kann eine evtl.
-   noch asynchron aufgebaute Druckvorschau (iOS) nie leer werden = kein weisses PDF.
-   Hier wird nur der Titel zurueckgesetzt und die Originalvorlage wiederhergestellt. */
-function finishSave() {
-  if (!pendingRestore) return;             // idempotent (nur einmal ausfuehren)
-  pendingRestore = false;
-  if (restoreTitle) { document.title = restoreTitle; restoreTitle = ''; }
-  afterSaved();
-}
-
-window.addEventListener('afterprint', finishSave);  // Desktop, Android, modernes Safari
-
-/* Fallback NUR bei echter Seiteninteraktion nach dem Druck (Tippen/Taste).
-   Waehrend der nativen Druckvorschau ist das unmoeglich -> es wird nie
-   mitten im Druck etwas zurueckgesetzt. */
-['pointerdown', 'keydown'].forEach(ev =>
-  document.addEventListener(ev, () => { if (printArmed) { printArmed = false; finishSave(); } }, true)
-);
-
-/* Nach dem Speichern: Entwurf verwerfen und ORIGINAL-Vorlage wiederherstellen */
-function afterSaved() {
-  if (currentKey && LETTERS[currentKey]) {
-    clearDraft(currentKey);
-    document.getElementById('doc-frame').innerHTML = LETTERS[currentKey].body;
-    requestAnimationFrame(scaleFrame);
-    setStatus('Gespeichert — Originalvorlage wiederhergestellt');
+  try {
+    const canvas = await html2canvas(clone, {
+      scale: scale, backgroundColor: '#ffffff', useCORS: true, logging: false,
+      width: A4_WIDTH_PX, height: A4_HEIGHT_PX,
+      windowWidth: A4_WIDTH_PX, windowHeight: A4_HEIGHT_PX, scrollX: 0, scrollY: 0
+    });
+    cleanup();
+    const img = canvas.toDataURL('image/jpeg', 0.95);
+    const jsPDF = window.jspdf.jsPDF;
+    const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait', compress: true });
+    pdf.addImage(img, 'JPEG', 0, 0, 210, 297, undefined, 'FAST'); // exakt A4 = 1 Seite
+    const blob = pdf.output('blob');
+    await deliverPDF(blob, currentName + '.pdf', pdf);
+  } catch (err) {
+    cleanup();
+    setStatus('Fehler beim Erstellen: ' + (err && err.message ? err.message : err));
   }
 }
 
